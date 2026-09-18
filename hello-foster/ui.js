@@ -107,6 +107,10 @@ const UI_CSS = `
     background: linear-gradient(135deg, rgba(99, 102, 241, .95), rgba(168, 85, 247, .95));
   }
   .act[data-busy="true"] { opacity: .5; pointer-events: none; }
+  /* Only one thing speaks at a time, so the other button greys out. */
+  .act:disabled { opacity: .3; cursor: default; pointer-events: none; }
+  /* Smaller variant, used inside the result panel. */
+  .act.sm { width: 22px; height: 22px; border-radius: 7px; }
 
   /* Icon swap inside the speak button. */
   .speak .icon-stop { display: none; }
@@ -122,15 +126,63 @@ const UI_CSS = `
     overflow: hidden;
   }
 
+  /* --- language picker ---------------------------------------------- */
+  .langs {
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid rgba(255, 255, 255, .08);
+  }
+  .langs[hidden] { display: none; }
+  .langs-label {
+    display: block;
+    margin-bottom: 6px;
+    color: #8f98ad;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+  .lang-row { display: flex; gap: 5px; }
+  .lang {
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 255, 255, .14);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, .04);
+    color: #cfd6e6;
+    font: 500 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease, transform .12s ease;
+  }
+  .lang:hover {
+    background: rgba(255, 255, 255, .12);
+    border-color: rgba(255, 255, 255, .3);
+    color: #fff;
+    transform: translateY(-1px);
+  }
+  .lang:active { transform: translateY(0) scale(.96); }
+  .lang[hidden] { display: none; }
+  .lang[data-active="true"] {
+    border-color: transparent;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    color: #fff;
+  }
+
   .result {
     margin-top: 10px;
     padding-top: 9px;
     border-top: 1px solid rgba(255, 255, 255, .08);
   }
   .result[hidden] { display: none; }
+  .result-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  .result-head:empty { display: none; }
   .tag {
     display: inline-block;
-    margin-bottom: 5px;
     padding: 1px 7px;
     border-radius: 20px;
     border: 1px solid rgba(168, 85, 247, .35);
@@ -202,8 +254,30 @@ const EXPANDED_HTML = `
 
     <div class="quote"></div>
 
+    <div class="langs" hidden>
+      <span class="langs-label">Translate to</span>
+      <div class="lang-row">
+        <button class="lang" type="button" data-lang="en" data-active="false">English</button>
+        <button class="lang" type="button" data-lang="fr" data-active="false">Français</button>
+        <button class="lang" type="button" data-lang="es" data-active="false">Español</button>
+      </div>
+    </div>
+
     <div class="result" hidden data-error="false">
-      <span class="tag" hidden></span>
+      <div class="result-head">
+        <span class="tag" hidden></span>
+        <button class="act sm speak speak-result" type="button" data-on="false" hidden
+                aria-label="Read translation" title="Read translation">
+          <svg class="icon-play" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+            <path d="M4 9.5v5h3.2L12 18.6V5.4L7.2 9.5H4z"/>
+            <path d="M15.2 8.3a4.3 4.3 0 010 7.4v-1.6a2.9 2.9 0 000-4.2V8.3z"/>
+            <path d="M15.2 5.1a7.5 7.5 0 010 13.8v-1.6a6 6 0 000-10.6V5.1z" opacity=".6"/>
+          </svg>
+          <svg class="icon-stop" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2"/>
+          </svg>
+        </button>
+      </div>
       <div class="result-text"></div>
     </div>
 

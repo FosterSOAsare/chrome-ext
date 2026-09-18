@@ -7,6 +7,10 @@
 // Nothing runs when this file loads. It only *defines* the class — content.js
 // decides when to create one and start it.
 
+// The languages offered in the picker. Keys are BCP 47 codes, which is what the
+// Translator API expects; the values are only used in messages.
+const LANGUAGES = { en: 'English', fr: 'French', es: 'Spanish' };
+
 class SelectionBubble {
   /**
    * @param {string} template  HTML for the shadow root (UI_HTML, from ui.js)
@@ -25,6 +29,10 @@ class SelectionBubble {
     // State
     this.state = 'hidden';    // 'hidden' | 'collapsed' | 'expanded'
     this.text = '';           // the currently selected text, kept for read-aloud
+    this.sourceLang = null;   // detected language of this.text, cached per selection
+    this.targetLang = null;   // language the current translation is in
+    this.speakingFor = null;  // 'source' | 'result' | null — which button is talking
+    this.speechToken = 0;     // bumped per utterance, to ignore stale onend events
     this.anchor = null;       // last selection rect, in viewport coordinates
     this.holdOpen = false;    // a click landed on our own UI
     this.frameQueued = false; // a reposition is already scheduled for next frame
@@ -81,8 +89,11 @@ class SelectionBubble {
     this.trigger = root.querySelector('.trigger');
     this.card = root.querySelector('.card');
     this.quote = root.querySelector('.quote');
-    this.speakBtn = root.querySelector('.speak');
+    this.speakBtn = root.querySelector('.actions .speak');
+    this.resultSpeakBtn = root.querySelector('.speak-result');
     this.translateBtn = root.querySelector('.translate');
+    this.langs = root.querySelector('.langs');
+    this.langsLabel = root.querySelector('.langs-label');
     this.result = root.querySelector('.result');
     this.resultTag = root.querySelector('.tag');
     this.resultText = root.querySelector('.result-text');
@@ -90,8 +101,16 @@ class SelectionBubble {
     // These buttons live inside the shadow root, so listen for their clicks
     // here rather than on the document.
     this.trigger.addEventListener('click', () => this.expand());
-    this.speakBtn.addEventListener('click', () => this.toggleSpeech());
-    this.translateBtn.addEventListener('click', () => this.translate());
+    this.speakBtn.addEventListener('click', () => this.toggleSpeech('source'));
+    this.resultSpeakBtn.addEventListener('click', () => this.toggleSpeech('result'));
+    this.translateBtn.addEventListener('click', () => this.toggleLangPicker());
+
+    // One listener on the row instead of three on the buttons — the click
+    // bubbles up from whichever pill was pressed and we read its data-lang.
+    this.langs.addEventListener('click', (e) => {
+      const pill = e.target.closest('.lang');
+      if (pill) this.translateTo(pill.dataset.lang);
+    });
 
     // documentElement, not body — body may not exist yet on some pages, and this
     // keeps us clear of body-level layout rules.
@@ -169,7 +188,7 @@ class SelectionBubble {
 
     // Speech carries on after the bubble is dismissed, so the button may be out
     // of date by the time we show it again.
-    this.syncSpeechButton();
+    this.syncSpeechButtons();
 
     // Make it visible before measuring — offsetWidth is 0 on a display:none node.
     this.host.style.display = 'block';
@@ -196,42 +215,76 @@ class SelectionBubble {
   // that it belongs to the page: navigating away cuts it off mid-sentence, and
   // a page that calls speechSynthesis.cancel() itself will stop us too.
 
-  toggleSpeech() {
-    speechSynthesis.speaking ? this.stopSpeech() : this.speak();
+  /** @param {'source'|'result'} which  the original selection, or the translation */
+  toggleSpeech(which) {
+    // Pressing the button that's already talking stops it. Pressing the other
+    // one can't happen — it's disabled while the first is going.
+    if (this.speakingFor === which) {
+      this.stopSpeech();
+      return;
+    }
+    this.speak(which);
   }
 
-  speak() {
-    if (!this.text) return;
+  speak(which) {
+    const text = which === 'result' ? this.resultText.textContent : this.text;
+    const lang = which === 'result' ? this.targetLang : this.sourceLang;
+    if (!text) return;
 
     // Always cancel first. Calling speak() twice queues a second utterance
     // rather than replacing the first, so without this you'd hear both.
     speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(this.text);
+    const utterance = new SpeechSynthesisUtterance(text);
 
-    // Fires when it finishes normally, and when cancel() stops it early.
-    utterance.onend = () => this.syncSpeechButton();
-    utterance.onerror = () => this.syncSpeechButton();
+    // Pick a voice that matches the language. Without this, a French
+    // translation gets read out by an English voice, which is unintelligible.
+    if (lang) utterance.lang = lang;
 
+    // cancel() above makes the PREVIOUS utterance fire onend, and it can land
+    // after this new one has started. The token tells us whether the event
+    // belongs to the utterance that's currently playing.
+    const token = ++this.speechToken;
+    const finish = () => {
+      if (token !== this.speechToken) return;   // stale event, ignore it
+      this.speakingFor = null;
+      this.syncSpeechButtons();
+    };
+    utterance.onend = finish;
+    utterance.onerror = finish;
+
+    this.speakingFor = which;
     speechSynthesis.speak(utterance);
-    this.syncSpeechButton();
+    this.syncSpeechButtons();
   }
 
   stopSpeech() {
+    this.speechToken++;          // invalidate any onend still in flight
     speechSynthesis.cancel();
-    this.syncSpeechButton();
+    this.speakingFor = null;
+    this.syncSpeechButtons();
   }
 
-  /** Point the button at reality rather than tracking state ourselves. */
-  syncSpeechButton() {
-    if (!this.speakBtn) return;
-    const speaking = speechSynthesis.speaking;
-    const label = speaking ? 'Stop' : 'Read aloud';
+  /** One button shows Stop, the other greys out. Neither, when it's quiet. */
+  syncSpeechButtons() {
+    const pairs = [
+      ['source', this.speakBtn, 'Read aloud'],
+      ['result', this.resultSpeakBtn, 'Read translation'],
+    ];
 
-    this.speakBtn.dataset.on = String(speaking);
-    // Icon-only button, so the label lives in the tooltip and for screen readers.
-    this.speakBtn.setAttribute('aria-label', label);
-    this.speakBtn.title = label;
+    for (const [which, btn, idleLabel] of pairs) {
+      if (!btn) continue;
+
+      const active = this.speakingFor === which;
+      const label = active ? 'Stop' : idleLabel;
+
+      btn.dataset.on = String(active);
+      btn.disabled = this.speakingFor !== null && !active;
+
+      // Icon-only buttons, so the label lives in the tooltip and for screen readers.
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+    }
   }
 
   // -------------------------------------------------------------- translate
@@ -242,20 +295,82 @@ class SelectionBubble {
   // the button click provides. It can't run in a service worker, so this has to
   // live here in the content script.
 
-  async translate() {
-    if (!this.text) return;
+  /** The translate button just opens and closes the language picker. */
+  toggleLangPicker() {
+    const open = this.langs.hidden;
+    this.langs.hidden = !open;
+    this.translateBtn.dataset.on = String(open);
+    this.place();        // the card just changed height
+
+    // Detection is async and may need to fetch a model, so the picker opens
+    // straight away and the options narrow a moment later.
+    if (open) this.refreshLangOptions();
+  }
+
+  /**
+   * Work out what language the selection is in and drop that option from the
+   * picker — there's no point offering to translate English into English.
+   */
+  async refreshLangOptions() {
+    this.langsLabel.textContent = 'Detecting language…';
+
+    const source = await this.ensureSourceLanguage();
+
+    // The user may have closed the picker or moved on while we were waiting.
+    if (this.langs.hidden) return;
+
+    this.langsLabel.textContent = source
+      ? `Translate from ${this.languageName(source)} to`
+      : 'Translate to';
+
+    for (const pill of this.langs.querySelectorAll('.lang')) {
+      pill.hidden = pill.dataset.lang === source;
+    }
+
+    this.place();        // one fewer pill can change the card's width
+  }
+
+  /** Detect once per selection, then reuse the answer. */
+  async ensureSourceLanguage() {
+    if (this.sourceLang === null) {
+      this.sourceLang = await this.detectLanguage(this.text);
+    }
+    return this.sourceLang;
+  }
+
+  /** 'fr' -> 'French', in whatever language the user reads. */
+  languageName(code) {
+    try {
+      const names = new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' });
+      return names.of(code) || LANGUAGES[code] || code;
+    } catch {
+      return LANGUAGES[code] || code;
+    }
+  }
+
+  /** A language pill was clicked. This is where the work happens. */
+  async translateTo(target) {
+    if (!this.text || !target) return;
 
     if (!('Translator' in self)) {
       this.showResult('Needs Chrome 138 or newer for built-in translation.', { error: true });
       return;
     }
 
+    this.markActiveLang(target);
     this.translateBtn.dataset.busy = 'true';
     this.showResult('Translating…');
 
     try {
-      const source = await this.detectLanguage(this.text);
-      const target = this.pickTargetLanguage(source);
+      // Translator.create() needs an explicit source, so if detection came back
+      // empty we have to guess something — English is the safest default.
+      const source = (await this.ensureSourceLanguage()) || 'en';
+
+      // The picker hides this case, but detection can be wrong on short text.
+      if (source === target) {
+        this.showResult(`That already looks like ${this.languageName(target)}.`);
+        return;
+      }
 
       const pair = { sourceLanguage: source, targetLanguage: target };
       if (await Translator.availability(pair) === 'unavailable') {
@@ -275,7 +390,8 @@ class SelectionBubble {
       const output = await translator.translate(this.text);
       translator.destroy?.();
 
-      this.showResult(output, { tag: `${source} → ${target}` });
+      this.targetLang = target;     // so the result's speak button picks the right voice
+      this.showResult(output, { tag: `${source} → ${target}`, speakable: true });
     } catch (err) {
       this.showResult(err?.message || 'Translation failed.', { error: true });
     } finally {
@@ -283,32 +399,33 @@ class SelectionBubble {
     }
   }
 
-  /** Best guess at what language the selection is in. Falls back to English. */
+  /**
+   * Best guess at what language the selection is in, or '' if we couldn't tell.
+   * Empty rather than a guess, so a failed detection doesn't wrongly remove an
+   * option from the picker.
+   */
   async detectLanguage(text) {
-    if (!('LanguageDetector' in self)) return 'en';
+    if (!('LanguageDetector' in self)) return '';
     try {
       const detector = await LanguageDetector.create();
       const [best] = await detector.detect(text);
       detector.destroy?.();
-      return best?.detectedLanguage || 'en';
+      return best?.detectedLanguage || '';
     } catch {
-      return 'en';
+      return '';
     }
   }
 
-  /**
-   * Translate into the browser's own language — unless the text is already in
-   * it, in which case go to Spanish so the button always does something visible.
-   */
-  pickTargetLanguage(source) {
-    const ui = (chrome.i18n?.getUILanguage?.() || navigator.language || 'en').split('-')[0];
-    if (source !== ui) return ui;
-    return source === 'es' ? 'en' : 'es';
+  /** Highlight the pill that's currently selected. */
+  markActiveLang(target) {
+    for (const pill of this.langs.querySelectorAll('.lang')) {
+      pill.dataset.active = String(pill.dataset.lang === target);
+    }
   }
 
   // ------------------------------------------------------------ result panel
 
-  showResult(text, { error = false, tag = '' } = {}) {
+  showResult(text, { error = false, tag = '', speakable = false } = {}) {
     if (!this.result) return;
 
     this.resultText.textContent = text;
@@ -317,16 +434,34 @@ class SelectionBubble {
     this.resultTag.hidden = !tag;
     this.result.hidden = false;
 
+    // Only offer to read out a real translation — not "Translating…" or an error.
+    this.resultSpeakBtn.hidden = !speakable;
+
     // The card just changed height, so it needs repositioning against the text.
     this.place();
   }
 
+  /** Back to a clean card: no translation, picker closed, no pill selected. */
   clearResult() {
     if (!this.result) return;
+
     this.result.hidden = true;
     this.resultTag.hidden = true;
+    this.resultSpeakBtn.hidden = true;
     this.resultText.textContent = '';
     this.result.dataset.error = 'false';
+    this.targetLang = null;
+
+    this.langs.hidden = true;
+    this.langsLabel.textContent = 'Translate to';
+    this.translateBtn.dataset.on = 'false';
+    this.translateBtn.dataset.busy = 'false';
+    this.markActiveLang(null);
+
+    // New selection, new language — drop the cached detection and put every
+    // option back before the next detect narrows them again.
+    this.sourceLang = null;
+    for (const pill of this.langs.querySelectorAll('.lang')) pill.hidden = false;
   }
 
   /** Re-read the selection and show or hide accordingly. */
