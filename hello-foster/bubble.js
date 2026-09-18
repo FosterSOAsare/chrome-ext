@@ -30,9 +30,11 @@ class SelectionBubble {
     this.state = 'hidden';    // 'hidden' | 'collapsed' | 'expanded'
     this.text = '';           // the currently selected text, kept for read-aloud
     this.sourceLang = null;   // detected language of this.text, cached per selection
+    this.langPromise = null;  // in-flight detection, so concurrent callers share one
     this.targetLang = null;   // language the current translation is in
     this.speakingFor = null;  // 'source' | 'result' | null — which button is talking
     this.speechToken = 0;     // bumped per utterance, to ignore stale onend events
+    this.speechRate = 1;      // from chrome.storage.sync, set by the popup
     this.anchor = null;       // last selection rect, in viewport coordinates
     this.holdOpen = false;    // a click landed on our own UI
     this.frameQueued = false; // a reposition is already scheduled for next frame
@@ -50,6 +52,20 @@ class SelectionBubble {
     document.addEventListener('keydown', this.handleKeyDown, true);
     document.addEventListener('scroll', this.handleReposition, { capture: true, passive: true });
     window.addEventListener('resize', this.handleReposition, { passive: true });
+
+    // Nudge the browser into loading the voice list now. The first getVoices()
+    // call returns an empty array and populates asynchronously, so asking early
+    // means a voice is available by the time anyone presses speak.
+    speechSynthesis.getVoices();
+
+    // chrome.storage is one of the few extension APIs a content script gets
+    // directly — no message to the service worker needed.
+    chrome.storage.sync.get({ speechRate: 1 })
+      .then(({ speechRate }) => { this.speechRate = speechRate; });
+
+    // Keep it live: changing the slider in the popup updates every open tab,
+    // rather than only taking effect on the next page load.
+    chrome.storage.onChanged.addListener(this.handleStorageChange);
   }
 
   /**
@@ -62,6 +78,7 @@ class SelectionBubble {
     document.removeEventListener('keydown', this.handleKeyDown, true);
     document.removeEventListener('scroll', this.handleReposition, { capture: true });
     window.removeEventListener('resize', this.handleReposition);
+    chrome.storage.onChanged.removeListener(this.handleStorageChange);
     this.host?.remove();
     this.host = null;
     this.state = 'hidden';
@@ -201,6 +218,11 @@ class SelectionBubble {
     this.state = 'expanded';
     this.wrap.dataset.state = 'expanded';
     this.place();     // re-measure: the card is much bigger than the button
+
+    // Start detecting in the background. Both the speak button and the language
+    // picker want this, and doing it now means neither has to wait later —
+    // which also keeps the speak click inside its user-activation window.
+    this.ensureSourceLanguage();
   }
 
   hide() {
@@ -226,20 +248,31 @@ class SelectionBubble {
     this.speak(which);
   }
 
-  speak(which) {
+  async speak(which) {
     const text = which === 'result' ? this.resultText.textContent : this.text;
-    const lang = which === 'result' ? this.targetLang : this.sourceLang;
     if (!text) return;
+
+    // The translation's language is known outright. The original's has to be
+    // detected — usually already done by expand(), so this resolves instantly.
+    const lang = which === 'result'
+      ? this.targetLang
+      : await this.ensureSourceLanguage();
 
     // Always cancel first. Calling speak() twice queues a second utterance
     // rather than replacing the first, so without this you'd hear both.
     speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = this.speechRate;
 
-    // Pick a voice that matches the language. Without this, a French
-    // translation gets read out by an English voice, which is unintelligible.
-    if (lang) utterance.lang = lang;
+    // Without this a French selection gets read out by an English voice, which
+    // is unintelligible. Setting `lang` asks the browser to match; naming the
+    // voice outright is more reliable when we can find one.
+    if (lang) {
+      utterance.lang = lang;
+      const voice = this.pickVoice(lang);
+      if (voice) utterance.voice = voice;
+    }
 
     // cancel() above makes the PREVIOUS utterance fire onend, and it can land
     // after this new one has started. The token tells us whether the event
@@ -256,6 +289,20 @@ class SelectionBubble {
     this.speakingFor = which;
     speechSynthesis.speak(utterance);
     this.syncSpeechButtons();
+  }
+
+  /**
+   * First voice whose language matches, comparing only the base code so that
+   * 'fr' matches 'fr-FR' and 'fr-CA'.
+   *
+   * getVoices() is empty until the browser has loaded the list, which is why
+   * start() touches it early. If it's still empty we return null and fall back
+   * to utterance.lang alone.
+   */
+  pickVoice(lang) {
+    const base = lang.split('-')[0].toLowerCase();
+    const voices = speechSynthesis.getVoices();
+    return voices.find((v) => v.lang.toLowerCase().startsWith(base)) || null;
   }
 
   stopSpeech() {
@@ -330,12 +377,23 @@ class SelectionBubble {
     this.place();        // one fewer pill can change the card's width
   }
 
-  /** Detect once per selection, then reuse the answer. */
-  async ensureSourceLanguage() {
-    if (this.sourceLang === null) {
-      this.sourceLang = await this.detectLanguage(this.text);
+  /**
+   * Detect once per selection, then reuse the answer.
+   *
+   * The in-flight promise is cached as well as the result, so if the picker and
+   * the speak button both ask before the first detection finishes, they share
+   * one LanguageDetector rather than racing to build two.
+   */
+  ensureSourceLanguage() {
+    if (this.sourceLang !== null) return Promise.resolve(this.sourceLang);
+
+    if (!this.langPromise) {
+      this.langPromise = this.detectLanguage(this.text).then((code) => {
+        this.sourceLang = code;
+        return code;
+      });
     }
-    return this.sourceLang;
+    return this.langPromise;
   }
 
   /** 'fr' -> 'French', in whatever language the user reads. */
@@ -461,6 +519,7 @@ class SelectionBubble {
     // New selection, new language — drop the cached detection and put every
     // option back before the next detect narrows them again.
     this.sourceLang = null;
+    this.langPromise = null;
     for (const pill of this.langs.querySelectorAll('.lang')) pill.hidden = false;
   }
 
@@ -510,6 +569,12 @@ class SelectionBubble {
     if (e.key === 'Shift' || e.key.startsWith('Arrow') || e.key === 'a' || e.key === 'A') {
       setTimeout(() => this.update(), 0);
     }
+  };
+
+  /** Fires in every tab when the popup writes a new setting. */
+  handleStorageChange = (changes, area) => {
+    if (area !== 'sync' || !changes.speechRate) return;
+    this.speechRate = changes.speechRate.newValue;
   };
 
   handleKeyDown = (e) => {

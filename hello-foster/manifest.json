@@ -1,8 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Hello Foster",
-  "version": "1.8.0",
+  "version": "1.10.0",
   "description": "Select text on any page to read it aloud or translate it.",
+  "permissions": [
+    "storage"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Hello Foster"

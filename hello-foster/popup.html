@@ -3,25 +3,150 @@
   <head>
     <meta charset="utf-8" />
     <style>
+      :root { color-scheme: dark; }
+
       body {
-        width: 210px;
+        width: 236px;
         margin: 0;
-        padding: 22px 18px;
-        text-align: center;
-        font: 400 13px/1.5 system-ui, sans-serif;
-        color: #111;
-        background: #fff;
+        padding: 16px;
+        background: #14161f;
+        color: #eef1f8;
+        font: 400 12.5px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
       }
-      .title { font-size: 18px; font-weight: 600; }
-      .hint { margin-top: 8px; color: #666; }
-      @media (prefers-color-scheme: dark) {
-        body { color: #f2f2f2; background: #1e1e1e; }
-        .hint { color: #a0a0a0; }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
       }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 55%, #ec4899 100%);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, .45);
+      }
+      .brand h1 { margin: 0; font-size: 13.5px; font-weight: 600; }
+
+      .hint { margin: 0 0 16px; color: #8f98ad; font-size: 11px; }
+
+      .setting {
+        padding-top: 13px;
+        border-top: 1px solid rgba(255, 255, 255, .09);
+      }
+      .row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 9px;
+      }
+      label {
+        color: #8f98ad;
+        font-size: 9.5px;
+        font-weight: 600;
+        letter-spacing: .07em;
+        text-transform: uppercase;
+      }
+      .value {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        font-size: 12px;
+        color: #cbbcff;
+      }
+
+      /* Range input needs manual styling to look like anything. */
+      input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 4px;
+        margin: 0;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, .13);
+        cursor: pointer;
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 15px;
+        height: 15px;
+        border: 0;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #6366f1, #a855f7);
+        box-shadow: 0 2px 7px rgba(99, 102, 241, .55);
+      }
+
+      .scale {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 5px;
+        color: #6e7689;
+        font-size: 9.5px;
+      }
+
+      .preview {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        width: 100%;
+        margin-top: 13px;
+        padding: 7px;
+        border: 1px solid rgba(255, 255, 255, .14);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, .04);
+        color: #cfd6e6;
+        font: 500 11.5px/1 system-ui, sans-serif;
+        cursor: pointer;
+        transition: background .12s ease, border-color .12s ease, color .12s ease;
+      }
+      .preview:hover {
+        background: rgba(255, 255, 255, .12);
+        border-color: rgba(255, 255, 255, .3);
+        color: #fff;
+      }
+      .preview svg { display: block; }
     </style>
   </head>
   <body>
-    <div class="title">Hello Foster</div>
-    <div class="hint">Select any text on a page to see the bubble.</div>
+    <div class="brand">
+      <span class="mark">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="#fff" aria-hidden="true">
+          <path d="M12 2.5l1.7 4.8 4.8 1.7-4.8 1.7L12 15.5l-1.7-4.8L5.5 9l4.8-1.7L12 2.5z"/>
+          <path d="M18.5 14l.85 2.4 2.4.85-2.4.85-.85 2.4-.85-2.4-2.4-.85 2.4-.85.85-2.4z" opacity=".65"/>
+        </svg>
+      </span>
+      <h1>Hello Foster</h1>
+    </div>
+    <p class="hint">Select text on any page to read it aloud or translate it.</p>
+
+    <div class="setting">
+      <div class="row">
+        <label for="rate">Speech pace</label>
+        <span class="value" id="rateValue">1.0×</span>
+      </div>
+
+      <input type="range" id="rate" min="0.5" max="1.5" step="0.05" value="1" />
+
+      <div class="scale">
+        <span>Slower</span>
+        <span>Normal</span>
+        <span>Faster</span>
+      </div>
+
+      <button class="preview" id="preview" type="button">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+          <path d="M4 9.5v5h3.2L12 18.6V5.4L7.2 9.5H4z"/>
+          <path d="M15.2 8.3a4.3 4.3 0 010 7.4v-1.6a2.9 2.9 0 000-4.2V8.3z"/>
+        </svg>
+        Hear a sample
+      </button>
+    </div>
+
+    <!-- Extension pages forbid inline <script>, so this must be its own file. -->
+    <script src="popup.js"></script>
   </body>
 </html>
