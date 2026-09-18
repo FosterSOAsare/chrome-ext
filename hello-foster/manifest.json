@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Hello Foster",
+  "version": "1.5.0",
+  "description": "Select text on any page to read it aloud or translate it.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Hello Foster"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "ui.js",
+        "bubble.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
